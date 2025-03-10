@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:gal/gal.dart';
+import 'package:image_picker/image_picker.dart';
 
 List<CameraDescription> cameras = [];
 
 Future<void> main() async {
-  // Ensure that plugin services are initialized
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Get available cameras
   try {
     cameras = await availableCameras();
   } on CameraException catch (e) {
@@ -28,10 +25,7 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
+      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
       home: const HomePage(),
     );
   }
@@ -45,218 +39,116 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // Store a list of images instead of just the last one
-  final List<File> _capturedImages = [];
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Camera App'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-      ),
-      body: _capturedImages.isEmpty
-          ? const Center(
-              child: Text('Tap the button to take a picture!'),
-            )
-          : Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                ),
-                itemCount: _capturedImages.length,
-                itemBuilder: (context, index) {
-                  return GestureDetector(
-                    onTap: () {
-                      // Show full-screen image when tapped
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => FullScreenImageView(
-                            imagePath: _capturedImages[index].path,
-                          ),
-                        ),
-                      );
-                    },
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.file(
-                        _capturedImages[index],
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final XFile? capturedImage = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CameraScreen(cameras: cameras),
-            ),
-          );
-
-          if (capturedImage != null) {
-            setState(() {
-              _capturedImages.add(File(capturedImage.path));
-            });
-          }
-        },
-        tooltip: 'Take a Picture',
-        child: const Icon(Icons.camera_alt),
-      ),
-    );
-  }
-}
-
-// Add a new screen to view images in full screen
-class FullScreenImageView extends StatelessWidget {
-  final String imagePath;
-
-  const FullScreenImageView({super.key, required this.imagePath});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: const Text('Photo View'),
-      ),
-      body: Center(
-        child: Image.file(
-          File(imagePath),
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
-}
-
-class CameraScreen extends StatefulWidget {
-  final List<CameraDescription> cameras;
-
-  const CameraScreen({super.key, required this.cameras});
-
-  @override
-  State<CameraScreen> createState() => _CameraScreenState();
-}
-
-class _CameraScreenState extends State<CameraScreen> {
-  late CameraController _controller;
-  late Future<void> _initializeControllerFuture;
-  bool _isRearCameraSelected = true;
+  CameraController? _controller;
+  int _selectedCameraIndex = 0;
+  XFile? _pickedImage;
 
   @override
   void initState() {
     super.initState();
-    // Initialize the camera controller
-    _initCamera(widget.cameras[0]);
+    _initializeCamera();
   }
 
-  Future<void> _initCamera(CameraDescription camera) async {
+  Future<void> _initializeCamera() async {
+    if (cameras.isEmpty) return;
     _controller = CameraController(
-      camera,
+      cameras[_selectedCameraIndex],
       ResolutionPreset.high,
     );
-
-    _initializeControllerFuture = _controller.initialize();
+    await _controller!.initialize();
     setState(() {});
   }
 
-  @override
-  void dispose() {
-    // Dispose of the controller when the widget is disposed
-    _controller.dispose();
-    super.dispose();
+  void _switchCamera() {
+    if (cameras.length < 2) return; // ป้องกันข้อผิดพลาดหากมีกล้องเดียว
+    setState(() {
+      _selectedCameraIndex = (_selectedCameraIndex + 1) % cameras.length;
+      _initializeCamera();
+    });
+  }
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    if (image != null) {
+      setState(() {
+        _pickedImage = image;
+      });
+    }
+  }
+
+  Future<void> _captureImage() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+
+    try {
+      final XFile imageFile = await _controller!.takePicture();
+      await Gal.putImage(imageFile.path);
+      setState(() {
+        _pickedImage = imageFile;
+      });
+    } catch (e) {
+      print("Error capturing image: $e");
+    }
+  }
+
+  Widget polaroidImage(String imagePath) {
+    return Container(
+      margin: EdgeInsets.all(10),
+      padding: EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(color: Colors.black26, blurRadius: 5, offset: Offset(2, 2)),
+        ],
+      ),
+      child: Column(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: Image.file(File(imagePath), fit: BoxFit.cover),
+          ),
+          SizedBox(height: 8),
+          Text("Captured Image", style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Take a Picture'),
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<void>(
-        future: _initializeControllerFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.done) {
-            // If the Future is complete, display the preview
-            return Column(
-              children: [
-                Expanded(
-                  child: CameraPreview(_controller),
-                ),
-              ],
-            );
-          } else {
-            // Otherwise, display a loading indicator
-            return const Center(child: CircularProgressIndicator());
-          }
-        },
-      ),
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      appBar: AppBar(title: Text("Flutter Camera")),
+      body: Column(
         children: [
-          // Switch camera button
-          FloatingActionButton(
-            heroTag: 'switchCamera',
-            onPressed: () {
-              setState(() {
-                _isRearCameraSelected = !_isRearCameraSelected;
-                int cameraIndex = _isRearCameraSelected ? 0 : 1;
-                if (widget.cameras.length > cameraIndex) {
-                  _initCamera(widget.cameras[cameraIndex]);
-                }
-              });
-            },
-            child: const Icon(Icons.flip_camera_ios),
+          Expanded(
+            child:
+                _controller == null || !_controller!.value.isInitialized
+                    ? Center(child: CircularProgressIndicator())
+                    : CameraPreview(_controller!),
           ),
-          // Take picture button
-          FloatingActionButton(
-            heroTag: 'takePicture',
-            onPressed: () async {
-              try {
-                // Ensure that the camera is initialized
-                await _initializeControllerFuture;
-
-                // Take the picture
-                final image = await _controller.takePicture();
-
-                // Save the image to the gallery using gal package
-                await Gal.putImage(image.path);
-
-                if (!mounted) return;
-
-                // Show a snackbar
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Picture saved to gallery!'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-
-                // Return to home screen with the image
-                Navigator.pop(context, image);
-              } catch (e) {
-                // If an error occurs, log the error to the console
-                print('Error taking picture: $e');
-              }
-            },
-            child: const Icon(Icons.camera),
+          if (_pickedImage != null) polaroidImage(_pickedImage!.path),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FloatingActionButton(
+                child: Icon(Icons.switch_camera),
+                onPressed: _switchCamera,
+              ),
+              SizedBox(width: 20),
+              FloatingActionButton(
+                child: Icon(Icons.camera),
+                onPressed: _captureImage,
+              ),
+              SizedBox(width: 20),
+              FloatingActionButton(
+                child: Icon(Icons.image),
+                onPressed: _pickImage,
+              ),
+            ],
           ),
         ],
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }
