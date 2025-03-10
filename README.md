@@ -1,1 +1,3 @@
-# flutter_camera_main
+# flutter_camera
+
+A new Flutter project.
